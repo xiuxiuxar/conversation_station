@@ -27,6 +27,7 @@
  */
 declare module '$env/static/private' {
 	export const VITE_USERKEY: string;
+	export const VITE_AGENT: string;
 	export const NVM_INC: string;
 	export const TERM_PROGRAM: string;
 	export const NODE: string;
@@ -118,6 +119,7 @@ declare module '$env/static/public' {
 declare module '$env/dynamic/private' {
 	export const env: {
 		VITE_USERKEY: string;
+		VITE_AGENT: string;
 		NVM_INC: string;
 		TERM_PROGRAM: string;
 		NODE: string;

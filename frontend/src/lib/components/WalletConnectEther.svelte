@@ -3,6 +3,7 @@
 
 	import { ethers } from "ethers";
 	import { CoinbaseWalletSDK } from "@coinbase/wallet-sdk";
+	import { signerAddress } from "ethers-svelte";
 
 	const sdk = new CoinbaseWalletSDK({
 		appName: "Conversation Station",
@@ -10,7 +11,7 @@
 	});
 
 	export let web3Props;
-
+	console.log($signerAddress);
 	async function connectWallet() {
 		if (window !== undefined && typeof window.ethereum != "undefined") {
 			// Create provider
@@ -21,17 +22,23 @@
 			const addresses = provider.request({
 				method: "eth_requestAccounts",
 			});
-			console.log(addresses);
-			const signer = await provider.getSigner();
-			// const contract =  new ethers.Contract(contractAdd,Abi.abi,signer)
-			//Uncomment above if you are using contract or making a dapp
-			web3Props = { signer, provider };
+
+			const address = await addresses;
+
+			web3Props = {
+				signer: provider.signer,
+				provider,
+				address: address[0],
+			};
 		}
 	}
 </script>
 
-{#if !web3Props?.signer}
+{#if !$signerAddress && !web3Props?.signer}
 	<button class="btn" on:click={connectWallet}>Connect Wallet</button>
 {:else}
-	<div>Connected to: {web3Props.signer.address.substr(0, 6)}..</div>
+	<div>
+		Connected to: {web3Props?.address.substr(0, 6) ||
+			$signerAddress?.substr(0, 6)}..
+	</div>
 {/if}

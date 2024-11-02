@@ -35,17 +35,23 @@
 		};
 	});
 
-	function handleSubscribe() {
+	function handleSubscribeUser() {
 		send({
 			type: "subscribe",
 			privateKey: import.meta.env.VITE_USERKEY,
+		});
+	}
+	function handleSubscribeAgent() {
+		send({
+			type: "subscribe",
+			privateKey: import.meta.env.VITE_AGENT,
 		});
 	}
 	function sendMessage() {
 		console.log("$signerAddress", $signerAddress);
 		send({
 			type: "send_message",
-			to: "0x2e8B7798B00221aF2A68a9b78F534b4C8558a4f9",
+			to: "0xd102213337C842cdF5Ec39637cC5DbeE609B126c",
 			content: inputMessage,
 			from: $signerAddress,
 		});
@@ -92,10 +98,14 @@
 	<div class="data-container">
 		<h2>WebSocket Data Stream</h2>
 		<div class="btn-group variant-filled mb-2">
-			<button class="expand-button" on:click={handleSubscribe}
-				>Subscribe</button
+			<button class="expand-button" on:click={handleSubscribeUser}
+				>Subscribe User</button
+			>
+			<button class="expand-button" on:click={handleSubscribeAgent}
+				>Subscribe Agent</button
 			>
 		</div>
+
 		{#if filteredData.length > 0}
 			<ul>
 				{#each filteredData as { text, expanded }, index}
