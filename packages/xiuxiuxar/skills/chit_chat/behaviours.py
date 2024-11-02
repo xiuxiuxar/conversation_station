@@ -26,13 +26,12 @@ import asyncio
 import subprocess
 from typing import cast
 from pathlib import Path
-from itertools import cycle
 
 import openai
 import websockets
 from dotenv import load_dotenv
 from eth_account import Account
-from aea.skills.behaviours import Behaviour, TickerBehaviour
+from aea.skills.behaviours import TickerBehaviour
 
 from packages.xiuxiuxar.skills.chit_chat.data_models import (
     Message,
@@ -304,37 +303,6 @@ class ChitChatBehaviour(TickerBehaviour):
 
         context_str = "\n".join(f"{k}: {v}" for k, v in context_data.items())
         return context_str
-
-    async def handler_requests(self, websocket):
-        """Handle incoming WebSocket messages and respond accordingly."""
-
-        try:
-            while True:
-                message = await websocket.recv()
-                message_data = json.loads(message)
-                self.context.logger.info(f"Agent received: {message_data}")
-                user_prompt = message_data.get("content")
-                context_data = self.get_context_data()
-                llm_response = answer(self.llm_client, user_prompt, context_data=context_data)
-                action_data = json.loads(llm_response)
-                self.execute_action(action_data)
-                self.context.logger.info(f"User: {user_prompt}\nAI: {action_data['response']}")
-                self.context.logger.info(f"Tick interval: {self.tick_interval}")
-
-                # if ():
-                echo_data = {
-                    "type": "send_message",
-                    "to": message_data["from"],
-                    "from": self.agent_address,
-                    "content": action_data["response"],
-                }
-                await websocket.send(json.dumps(echo_data))
-                self.context.logger.info(f"Agent echoed: {message_data['content']}")
-                await asyncio.sleep(10)
-        except websockets.exceptions.ConnectionClosed as e:
-            self.context.logger.error(f"WebSocket connection closed unexpectedly: {e}")
-        except Exception as e:
-            self.context.logger.error(f"Error in handling requests: {e}")
 
     def check_server_health(self) -> None:
         """Check if XMTP server is running and restart if necessary."""
