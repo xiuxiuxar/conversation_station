@@ -12,7 +12,8 @@ const CONFIG = {
     WS_HOST: process.env.HOST || '0.0.0.0',
     MAX_MESSAGE_SIZE: 1000000, // 1MB
     PING_INTERVAL: 30000,
-    PING_TIMEOUT: 5000
+    PING_TIMEOUT: 5000,
+    NETWORK: process.env.NETWORK || 'dev',
 };
 
 const LOG_TYPES = {
@@ -278,7 +279,7 @@ function setupWebSocketServer() {
 const { wss, state } = setupWebSocketServer();
 
 // Cleanup handlers
-process.on('SIGTERM', async () => {
+process.on('SIGTERM' || 'SIGINT', async () => {
     state.isShuttingDown = true;
     
     for (const stream of state.activeStreams.values()) {
