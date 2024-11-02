@@ -38,6 +38,7 @@ from packages.xiuxiuxar.skills.chit_chat.data_models import (
     Messages,
 )
 
+WEBSOCKET_URI = "ws://localhost:8080"
 
 MODEL = "Meta-Llama-3-1-405B-Instruct-FP8"
 BASE_URL = "https://chatapi.akash.network/api/v1"
@@ -155,15 +156,14 @@ class ChitChatBehaviour(TickerBehaviour):
             self.xmtp_server_process = subprocess.Popen(command, cwd=self.xmtp_service_dir)
             self.context.logger.info("XMTP server started on port 8080.")
             # subscribe agent to XMTP server
-            uri = "ws://localhost:8080"
             agent_pk = os.environ.get("AGENT_PK")
             self.agent_address = derive_public_address(agent_pk)
             assert agent_pk is not None
-            asyncio.create_task(self.subscribe_agent(uri, agent_pk))
+            asyncio.create_task(self.subscribe_agent(WEBSOCKET_URI, agent_pk))
 
     async def subscribe_agent(self, uri: str, agent_pk: str):
         await asyncio.sleep(1)
-        self.context.logger.info(f"Executing subscribe_agent")
+        self.context.logger.info("Executing subscribe_agent")
         try:
             async with websockets.connect(uri) as websocket:
                 data = {"type": "subscribe", "privateKey": agent_pk}
@@ -171,10 +171,8 @@ class ChitChatBehaviour(TickerBehaviour):
                 response = await websocket.recv()
                 self.context.logger.info(f"Agent subscription response: {response}")
                 await self.handler_requests(websocket)
-        except websockets.exceptions.InvalidURI as e:
-            self.context.logger.error(f"Invalid WebSocket URI: {e}")
-        except websockets.exceptions.ConnectionClosed as e:
-            self.context.logger.error(f"WebSocket connection closed unexpectedly: {e}")
+        except (websockets.exceptions.InvalidURI, websockets.exceptions.ConnectionClosed) as e:
+            self.context.logger.error(f"WebSocket error: {e}")
         except Exception as e:
             self.context.logger.error(f"Error during agent subscription: {e}")
 
@@ -200,6 +198,7 @@ class ChitChatBehaviour(TickerBehaviour):
         }
 
         context_str = "\n".join(f"{k}: {v}" for k, v in context_data.items())
+        return context_str
 
     async def handler_requests(self, websocket):
         """Handle incoming WebSocket messages and respond accordingly."""
@@ -217,16 +216,16 @@ class ChitChatBehaviour(TickerBehaviour):
                 self.context.logger.info(f"User: {user_prompt}\nAI: {action_data['response']}")
                 self.context.logger.info(f"Tick interval: {self.tick_interval}")
 
-                if ():
-                    echo_data = {
-                        "type": "send_message",
-                        "to": message_data["from"],
-                        "from": self.agent_address,
-                        "content": action_data['response'],
-                    }
-                    await websocket.send(json.dumps(echo_data))
-                    self.context.logger.info(f"Agent echoed: {message_data['content']}")
-                await asyncio.sleep(1)
+                # if ():
+                echo_data = {
+                    "type": "send_message",
+                    "to": message_data["from"],
+                    "from": self.agent_address,
+                    "content": action_data['response'],
+                }
+                await websocket.send(json.dumps(echo_data))
+                self.context.logger.info(f"Agent echoed: {message_data['content']}")
+                await asyncio.sleep(10)
         except websockets.exceptions.ConnectionClosed as e:
             self.context.logger.error(f"WebSocket connection closed unexpectedly: {e}")
         except Exception as e:
