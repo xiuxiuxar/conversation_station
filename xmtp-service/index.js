@@ -5,18 +5,40 @@ const { ethers } = require('ethers');
 const WebSocket = require('ws');
 
 // WebSocket Server Setup
-const wss = new WebSocket.Server({ port: 8080 });
+const wss = new WebSocket.Server({ host: process.env.HOST || '0.0.0.0', port: 8080 });
 let connectedClients = {};
 const conversationsMap = {};
 
 // Connect to XMTP
 async function connectToXMTP(privateKey) {
-    const provider = new ethers.JsonRpcProvider(process.env.INFURA_URL);
-    const wallet = new ethers.Wallet(privateKey).connect(provider);
-    const publicAddress = wallet.address;
-    const xmtpClient = await Client.create(wallet);
-    console.log(`${publicAddress} connected to XMTP`);
-    return { xmtpClient, publicAddress };
+    try {
+        const provider = new ethers.JsonRpcProvider(process.env.INFURA_URL);
+        const wallet = new ethers.Wallet(privateKey).connect(provider);
+        const publicAddress = wallet.address;
+
+        console.log('Checking if address can message...');
+        const canMessage = await Client.canMessage(publicAddress);
+        if (!canMessage) {
+            throw new Error(`${publicAddress} not enabled for XMTP`);
+        }
+
+        console.log('Creating XMTP client...');
+        const xmtpClient = await Client.create(wallet, { env: 'dev' });
+
+        if (!xmtpClient) {
+            throw new Error(`Failed to create XMTP client`);
+        }
+
+        console.log(`${publicAddress} connected to XMTP`);
+        return { xmtpClient, publicAddress };
+    } catch (error) {
+        console.error('XMTP connection details:', {
+            error: error.message,
+            stack: error.stack,
+            cause: error.cause,
+        });
+        throw error;
+    }
 }
 
 // Handle WebSocket Connections
@@ -35,6 +57,9 @@ wss.on('connection', async (ws) => {
                 connectedClients[publicAddress] = { ws, xmtpClient };
                 console.log(`Agent ${publicAddress} subscribed.`);
                 ws.send(JSON.stringify({ status: 'subscribed', publicAddress }));
+                
+                // Start listening for messages immediately after subscription
+                startMessageListener(publicAddress);
             } catch (error) {
                 console.error('Error connecting to XMTP:', error);
                 ws.send(JSON.stringify({ status: 'error', message: 'Failed to subscribe to XMTP.' }));
@@ -95,60 +120,35 @@ wss.on('connection', async (ws) => {
     });
 });
 
-// Listen for incoming XMTP messages and broadcast them to WebSocket clients
-async function listenForMessages(publicAddress) {
+// Modify the message listening implementation
+async function startMessageListener(publicAddress) {
     const clientData = connectedClients[publicAddress];
-    if (clientData && clientData.xmtpClient) {
-        const { ws: senderWs, xmtpClient } = clientData;
+    if (!clientData?.xmtpClient) return;
 
-        try {
-            // Listen for all new messages across all conversations
-            for await (const message of await xmtpClient.conversations.streamAllMessages()) {
-                const sender = message.senderAddress;  // === publicAddress
-                const recipient = message.conversation.peerAddress
+    const { ws, xmtpClient } = clientData;
+    
+    try {
+        // Stream all messages
+        const stream = await xmtpClient.conversations.streamAllMessages();
+        
+        // Process each message as it arrives
+        for await (const message of stream) {
+            const sender = message.senderAddress;
+            const recipient = sender === publicAddress
+                ? message.conversation.peerAddress
+                : publicAddress;
 
-                if (sender === recipient) {
-                    // This message was sent from me
-                    continue;
-                }
+            console.log(`Processing message - From: ${sender}, To: ${recipient}, Content: ${message.content}`);
 
-                // console.log(`Received message from ${sender} for ${recipient}: ${message.content}`);
-
-                // Guard clause for missing recipient, return to sender
-                if (!(recipient in connectedClients)) {
-                    console.error(`Error: Recipient ${recipient} not found in connectedClients.`);
-                    senderWs.send(JSON.stringify({
-                        error: `Recipient ${recipient} is not in connected clients.`,
-                    }));
-                    return;
-                }
-
-                // Forward message to recipient
-                const { ws: recipientWs, xmtpClient } = connectedClients[recipient]
-                if (recipientWs.readyState === WebSocket.OPEN) {
-                    recipientWs.send(JSON.stringify({
-                        from: sender,
-                        to: recipient,
-                        content: message.content,
-                    }));
-                } else {
-                    console.error(`WebSocket not open for recipient: ${recipient}`);
-                    senderWs.send(JSON.stringify({
-                        error: `Recipient ${recipient} websocket connection not open.`,
-                    }));
-                }
+            if (recipient === publicAddress) {
+                ws.send(JSON.stringify({
+                    from: sender,
+                    to: recipient,
+                    content: message.content,
+                }));
             }
-        } catch (error) {
-            console.error('Error listening for messages:', error);
         }
-    } else {
-        console.error(`No client registered with publicAddress: ${publicAddress}`);
+    } catch (error) {
+        console.error('Error in message listener:', error);
     }
 }
-
-// Call this function to listen for messages once an agent has subscribed
-setInterval(() => {
-    Object.keys(connectedClients).forEach(publicAddress => {
-        listenForMessages(publicAddress);
-    });
-}, 5000);
