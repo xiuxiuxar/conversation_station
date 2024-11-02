@@ -23,6 +23,7 @@ import os
 import asyncio
 import openai
 import json
+import time
 from pathlib import Path
 from itertools import cycle
 from typing import cast
@@ -129,6 +130,61 @@ def safe_repr(key, value):
     return repr(value)
 
 
+class WebSocketManager:
+    def __init__(self, uri: str, logger):
+        self.uri = uri
+        self.websocket = None
+        self.logger = logger
+        self.connected = False
+        self.reconnect_interval = 5  # seconds
+        self._running = False
+        self._handlers = []
+
+    def add_message_handler(self, handler):
+        self._handlers.append(handler)
+
+    async def connect(self):
+        self._running = True
+        while self._running:
+            try:
+                if not self.connected:
+                    self.websocket = await websockets.connect(self.uri)
+                    self.connected = True
+                    self.logger.info(f"Connected to WebSocket at {self.uri}")
+                    await self._handle_messages()
+            except Exception as e:
+                self.logger.error(f"WebSocket connection error: {e}")
+                self.connected = False
+                await asyncio.sleep(self.reconnect_interval)
+
+    async def _handle_messages(self):
+        try:
+            while self.connected and self._running:
+                message = await self.websocket.recv()
+                for handler in self._handlers:
+                    await handler(message)
+        except Exception as e:
+            self.logger.error(f"Error handling messages: {e}")
+            self.connected = False
+
+    async def send(self, data: dict):
+        if not self.connected:
+            self.logger.error("Cannot send message: WebSocket not connected")
+            return
+        
+        try:
+            await self.websocket.send(json.dumps(data))
+            self.logger.info(f"Sent message: {data}")
+        except Exception as e:
+            self.logger.error(f"Error sending message: {e}")
+            self.connected = False
+
+    async def close(self):
+        self._running = False
+        if self.websocket:
+            await self.websocket.close()
+
+
 class ChitChatBehaviour(TickerBehaviour):
     """ChitChatBehaviour."""
 
@@ -140,9 +196,21 @@ class ChitChatBehaviour(TickerBehaviour):
         """Implement the setup."""
         self.context.logger.info(f"Setup {self.__class__.__name__}")
         self.context.logger.info(f"Tick interval: {self.tick_interval}")
+
         self.xmtp_service_dir = get_repo_root() / "xmtp-service"
         self.xmtp_server_process = None
         self.start_xmtp_server()
+
+        time.sleep(2)
+        # subscribe agent to XMTP server
+        agent_pk = os.environ.get("AGENT_PK")
+        assert agent_pk is not None
+        self.agent_address = derive_public_address(agent_pk)
+        self.ws_manager = WebSocketManager(WEBSOCKET_URI, self.context.logger)
+        self.ws_manager.add_message_handler(self.handle_message)
+        
+        asyncio.create_task(self.ws_manager.connect())
+        asyncio.create_task(self.subscribe_agent(agent_pk))
 
         self.llm_client = openai.OpenAI(
             api_key=self.context.params.akash_api_key,
@@ -152,31 +220,40 @@ class ChitChatBehaviour(TickerBehaviour):
     def start_xmtp_server(self):
         """Start the XMTP server on port 8080."""
         if self.xmtp_server_process is None or self.xmtp_server_process.poll() is not None:
-            command = ["node", "index.js"]
-            self.xmtp_server_process = subprocess.Popen(command, cwd=self.xmtp_service_dir)
-            self.context.logger.info("XMTP server started on port 8080.")
-            # subscribe agent to XMTP server
-            agent_pk = os.environ.get("AGENT_PK")
-            self.agent_address = derive_public_address(agent_pk)
-            assert agent_pk is not None
-            asyncio.create_task(self.subscribe_agent(WEBSOCKET_URI, agent_pk))
+            try:
+                command = ["node", "index.js"]
+                env = os.environ.copy()
+                env["HOST"] = "0.0.0.0"
+                self.xmtp_server_process = subprocess.Popen(command, cwd=self.xmtp_service_dir, env=env)
+                self.context.logger.info("XMTP server started on port 8080.")
+            except Exception as e:
+                self.context.logger.error(f"Error starting XMTP server: {e}")
 
-    async def subscribe_agent(self, uri: str, agent_pk: str):
-        await asyncio.sleep(1)
-        self.context.logger.info("Executing subscribe_agent")
-        try:
-            async with websockets.connect(uri) as websocket:
-                data = {"type": "subscribe", "privateKey": agent_pk}
-                await websocket.send(json.dumps(data))
-                response = await websocket.recv()
-                self.context.logger.info(f"Agent subscription response: {response}")
-                await self.handler_requests(websocket)
-        except (websockets.exceptions.InvalidURI, websockets.exceptions.ConnectionClosed) as e:
-            self.context.logger.error(f"WebSocket error: {e}")
-        except Exception as e:
-            self.context.logger.error(f"Error during agent subscription: {e}")
+    async def subscribe_agent(self, agent_pk: str):
+        await asyncio.sleep(1)  # Give WebSocket time to connect
+        data = {"type": "subscribe", "privateKey": agent_pk}
+        await self.ws_manager.send(data)
 
-    def get_context_data(self):
+    async def handle_message(self, message):
+        message_data = json.loads(message)
+        self.context.logger.info(f"Agent received: {message_data}")
+        
+        if "content" in message_data:
+            user_prompt = message_data["content"]
+            context_data = self.get_context_data()
+            llm_response = answer(self.llm_client, user_prompt, context_data=context_data)
+            action_data = json.loads(llm_response)
+            self.execute_action(action_data)
+            
+            echo_data = {
+                "type": "send_message",
+                "to": message_data["from"],
+                "from": self.agent_address,
+                "content": action_data['response'],
+            }
+            await self.ws_manager.send(echo_data)
+
+    def get_context_data(self) -> str:
         context_data = {
             "params": {
                 attr: safe_repr(attr, getattr(self.context.params, attr))
@@ -242,7 +319,7 @@ class ChitChatBehaviour(TickerBehaviour):
 
         self.check_server_health()
         
-    def execute_action(self, action_data):
+    def execute_action(self, action_data: dict):
         action = action_data.get('action', 'none')
         params = action_data.get('params', {})
 
@@ -259,8 +336,12 @@ class ChitChatBehaviour(TickerBehaviour):
         self.context.params.tick_interval = new_interval
 
     def teardown(self) -> None:
-        """Clean up and terminate the XMTP server when the agent stops."""
+        """Clean up resources."""
         if self.xmtp_server_process and self.xmtp_server_process.poll() is None:
-            self.context.logger.info("Terminating XMTP server on port 8080.")
+            self.context.logger.info("Terminating XMTP server.")
             self.xmtp_server_process.terminate()
-            self.xmtp_server_process.wait()  # Ensure the process is fully terminated
+            self.xmtp_server_process.wait()
+        
+        # Close WebSocket connection
+        if hasattr(self, 'ws_manager'):
+            asyncio.create_task(self.ws_manager.close())
