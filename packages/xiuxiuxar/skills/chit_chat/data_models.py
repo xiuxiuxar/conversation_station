@@ -24,10 +24,12 @@ from pydantic import BaseModel
 
 class Message(BaseModel):
     """A message."""
+
     role: str
     content: str
 
 
 class Messages(BaseModel):
     """A list of messages."""
+
     messages: list[Message]

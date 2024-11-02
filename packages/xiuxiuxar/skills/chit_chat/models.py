@@ -24,6 +24,7 @@ from aea.skills.base import Model
 
 class Params(Model):
     """Params."""
+
     def __init__(self, *args, **kwargs):
         self.akash_api_key = kwargs.pop("akash_api_key")
         super().__init__(*args, **kwargs)

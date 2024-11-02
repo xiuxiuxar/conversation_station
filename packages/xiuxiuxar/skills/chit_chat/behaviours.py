@@ -20,24 +20,25 @@
 """This package contains a chat behaviour."""
 
 import os
-import asyncio
-import openai
 import json
 import time
+import asyncio
+import subprocess
+from typing import cast
 from pathlib import Path
 from itertools import cycle
-from typing import cast
-import subprocess
+
+import openai
 import websockets
 from dotenv import load_dotenv
 from eth_account import Account
-
 from aea.skills.behaviours import Behaviour, TickerBehaviour
 
 from packages.xiuxiuxar.skills.chit_chat.data_models import (
     Message,
     Messages,
 )
+
 
 WEBSOCKET_URI = "ws://localhost:8080"
 
@@ -47,9 +48,9 @@ BASE_URL = "https://chatapi.akash.network/api/v1"
 
 def get_repo_root() -> Path:
     """Get the root directory of the repository."""
-    command = ['git', 'rev-parse', '--show-toplevel']
+    command = ["git", "rev-parse", "--show-toplevel"]
     repo_root = subprocess.check_output(command, stderr=subprocess.STDOUT).strip()
-    return Path(repo_root.decode('utf-8'))
+    return Path(repo_root.decode("utf-8"))
 
 
 # Load environment variables from .env file
@@ -113,9 +114,9 @@ def answer(llm_client, user_prompt: str, context_data: str) -> str:
     llm_response = llm_client.chat.completions.create(
         model=MODEL,
         **messages.model_dump(),
-        n=1,                      # number of llm_response.choices to return
-        max_tokens=max_tokens,    # limit response size
-        temperature=0.7,          # higher temperature == more variability
+        n=1,  # number of llm_response.choices to return
+        max_tokens=max_tokens,  # limit response size
+        temperature=0.7,  # higher temperature == more variability
     )
 
     return llm_response.choices[0].message.content
@@ -123,10 +124,11 @@ def answer(llm_client, user_prompt: str, context_data: str) -> str:
 
 def safe_repr(key, value):
     """Redact sensitive keys from the value."""
-    sensitive_keys = ['key', 'token', 'secret', 'password', 'api']
-    if isinstance(value, str) and (any(k in key.lower() for k in sensitive_keys) or 
-                                    any(k in value.lower() for k in sensitive_keys)):
-        return '[REDACTED]'
+    sensitive_keys = ["key", "token", "secret", "password", "api"]
+    if isinstance(value, str) and (
+        any(k in key.lower() for k in sensitive_keys) or any(k in value.lower() for k in sensitive_keys)
+    ):
+        return "[REDACTED]"
     elif isinstance(value, dict):
         return {k: safe_repr(k, v) for k, v in value.items()}
     elif isinstance(value, list):
@@ -172,9 +174,9 @@ class WebSocketManager:
                 message_data = json.loads(message)
 
                 if message_data.get("type") == "log":
-                    log_type = message_data.get('logType', 'info')
-                    log_msg = message_data.get('message', '')
-                    log_data = message_data.get('data', {})
+                    log_type = message_data.get("logType", "info")
+                    log_msg = message_data.get("message", "")
+                    log_data = message_data.get("data", {})
 
                     if log_type == "error":
                         self.logger.error(f"XMTP: {log_msg}", extra=log_data)
@@ -195,7 +197,7 @@ class WebSocketManager:
         if not self.connected:
             self.logger.error("Cannot send message: WebSocket not connected")
             return
-        
+
         try:
             await self.websocket.send(json.dumps(data))
             self.logger.info(f"Sent message: {data}")
@@ -233,7 +235,7 @@ class ChitChatBehaviour(TickerBehaviour):
         self.agent_address = derive_public_address(agent_pk)
         self.ws_manager = WebSocketManager(WEBSOCKET_URI, self.context.logger)
         self.ws_manager.add_message_handler(self.handle_message)
-        
+
         self.ws_connect_task = asyncio.create_task(self.ws_manager.connect())
         self.subscribe_agent_task = asyncio.create_task(self.subscribe_agent(agent_pk))
 
@@ -262,19 +264,19 @@ class ChitChatBehaviour(TickerBehaviour):
         """Handle a message from the WebSocket server."""
         message_data = json.loads(message)
         self.context.logger.info(f"Agent received: {message_data}")
-        
+
         if "content" in message_data:
             user_prompt = message_data["content"]
             context_data = self.get_context_data()
             llm_response = answer(self.llm_client, user_prompt, context_data=context_data)
             action_data = json.loads(llm_response)
             self.execute_action(action_data)
-            
+
             echo_data = {
                 "type": "send_message",
                 "to": message_data["from"],
                 "from": self.agent_address,
-                "content": action_data['response'],
+                "content": action_data["response"],
             }
             await self.ws_manager.send(echo_data)
 
@@ -284,20 +286,20 @@ class ChitChatBehaviour(TickerBehaviour):
             "params": {
                 attr: safe_repr(attr, getattr(self.context.params, attr))
                 for attr in dir(self.context.params)
-                if not attr.startswith('_')
+                if not attr.startswith("_")
             },
             "context": {
                 attr: safe_repr(attr, getattr(self.context, attr))
                 for attr in dir(self.context)
-                if not attr.startswith('_')
+                if not attr.startswith("_")
             },
-            "config": safe_repr('config', self.context.params.config),
+            "config": safe_repr("config", self.context.params.config),
             "configuration": {
                 "class_name": self.context.params.configuration.class_name,
-                "args": safe_repr('args', self.context.params.configuration.args),
+                "args": safe_repr("args", self.context.params.configuration.args),
             },
             "tick_interval": self.tick_interval,
-            "repo_url": "https://github.com/xiuxiuxar/conversation_station"
+            "repo_url": "https://github.com/xiuxiuxar/conversation_station",
         }
 
         context_str = "\n".join(f"{k}: {v}" for k, v in context_data.items())
@@ -324,7 +326,7 @@ class ChitChatBehaviour(TickerBehaviour):
                     "type": "send_message",
                     "to": message_data["from"],
                     "from": self.agent_address,
-                    "content": action_data['response'],
+                    "content": action_data["response"],
                 }
                 await websocket.send(json.dumps(echo_data))
                 self.context.logger.info(f"Agent echoed: {message_data['content']}")
@@ -344,11 +346,11 @@ class ChitChatBehaviour(TickerBehaviour):
         """Implement the act."""
 
         self.check_server_health()
-        
+
     def execute_action(self, action_data: dict):
         """Execute an action."""
-        action = action_data.get('action', 'none')
-        params = action_data.get('params', {})
+        action = action_data.get("action", "none")
+        params = action_data.get("params", {})
 
         if action == "update_tick_interval":
             new_interval = params.get("new_interval")
@@ -364,11 +366,10 @@ class ChitChatBehaviour(TickerBehaviour):
 
     def teardown(self) -> None:
         """Clean up resources."""
-        if hasattr(self, 'ws_manager'):
+        if hasattr(self, "ws_manager"):
             self.cleanup_task = asyncio.create_task(self.ws_manager.close())
 
         if self.xmtp_server_process and self.xmtp_server_process.poll() is None:
             self.context.logger.info("Terminating XMTP server.")
             self.xmtp_server_process.terminate()
             self.xmtp_server_process.wait()
-        
