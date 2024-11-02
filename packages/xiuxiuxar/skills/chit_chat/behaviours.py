@@ -161,6 +161,21 @@ class WebSocketManager:
         try:
             while self.connected and self._running:
                 message = await self.websocket.recv()
+                message_data = json.loads(message)
+
+                if message_data.get("type") == "log":
+                    log_type = message_data.get('logType', 'info')
+                    log_msg = message_data.get('message', '')
+                    log_data = message_data.get('data', {})
+
+                    if log_type == "error":
+                        self.logger.error(f"XMTP: {log_msg}", extra=log_data)
+                    elif log_type == "warning":
+                        self.logger.warning(f"XMTP: {log_msg}", extra=log_data)
+                    else:
+                        self.logger.info(f"XMTP: {log_msg}", extra=log_data)
+                    continue
+
                 for handler in self._handlers:
                     await handler(message)
         except Exception as e:

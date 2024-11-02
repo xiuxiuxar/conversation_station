@@ -21,3 +21,4 @@ packages/open_aea
 packages/valory
 
 node_modules
+.DS_Store
